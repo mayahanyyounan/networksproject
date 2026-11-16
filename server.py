@@ -20,7 +20,6 @@ pending = {}   # tasks sent but not finished: taskid -> {"worker": id, "sent": t
 attempts = {}  # taskid -> how many times it was dispatched
 completedTasks = set()  # Stores IDs of tasks whose results have been processed.
 
-SHUTDOWN = 6  # message type telling workers all tasks are done (also add SHUTDOWN = 6 to protocol.py on the worker side)
 startTime = None  # set when the first worker joins, used for total_completion_time
 
 stats = {"reassigned": 0, "dup_dropped": 0, "corrupt": 0}  # metrics for the report
@@ -121,9 +120,6 @@ while len(completedTasks) < TOTAL: #stop when all tasks are done (was: while Tru
  assign_idle()     # give work to every free worker
 
 totalTime = time.time() - startTime
-for i in range(3):  # send SHUTDOWN 3 times in case a packet is lost
-  for wid in worker:
-    send(SHUTDOWN, wid, 0, 1)
 print("All", TOTAL, "tasks completed")
 print("total_completion_time: %.2f s" % totalTime)
 print("reassigned:", stats["reassigned"], "duplicates dropped:", stats["dup_dropped"], "corrupt packets:", stats["corrupt"])
