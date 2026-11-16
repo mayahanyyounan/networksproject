@@ -5,9 +5,11 @@
 
 RJDAP_FLEET is a custom application-layer communication protocol designed to distribute computational tasks from a central Command Hub (server) to multiple worker nodes over UDP.
 
-The system uses a reliable task distribution mechanism on top of UDP. It supports worker registration, heartbeat monitoring, task dispatching, result acknowledgment, retransmissions, timeout detection, and task reassignment.
+The computational workload consists of SHA-256 hash searching. Each worker receives a numerical range and searches for a number whose SHA-256 hash begins with a specified 16-bit target prefix. If a match is found, the worker returns the matching number; otherwise, it reports that no match exists within its assigned range.
 
-The project demonstrates how reliability mechanisms can be implemented at the application layer while using connectionless UDP communication.
+To provide reliable communication over connectionless UDP, the protocol implements several application-layer mechanisms, including worker registration, heartbeat monitoring, task dispatching, result acknowledgments, retransmissions, timeout detection, and task reassignment.
+
+The project demonstrates how reliability mechanisms can be implemented at the application layer to support distributed task execution over UDP.
 
 ### 2. Project Components
 
