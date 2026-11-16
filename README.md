@@ -1,220 +1,168 @@
-# Project 2: RJDAP (Distributed Fleet Defense)
+# RJDAP_FLEET
+## Reliable Job Distribution and Assignment Protocol
 
-## 1. Project Overview
+### 1. Project Overview
 
-Project2 is a UDP-based distributed task processing system consisting of a central server and multiple worker nodes.
+RJDAP_FLEET is a custom application-layer communication protocol designed to distribute computational tasks from a central Command Hub (server) to multiple worker nodes over UDP.
 
-The server divides a large computational workload into smaller tasks and distributes them among available workers. Each worker processes its assigned task and sends the result back to the server.
+The system uses a reliable task distribution mechanism on top of UDP. It supports worker registration, heartbeat monitoring, task dispatching, result acknowledgment, retransmissions, timeout detection, and task reassignment.
 
-The system uses a custom application-layer protocol to manage communication between the server and workers.
+The project demonstrates how reliability mechanisms can be implemented at the application layer while using connectionless UDP communication.
 
-The main objective is to demonstrate distributed computing, UDP communication, task scheduling, reliability, and error detection.
+### 2. Project Components
 
-## 2. System Architecture
+The project consists of the following Python files:
 
-The system consists of three main components:
+- **protocol.py:** Implements the RJDAP_FLEET protocol, including packet construction, packet parsing, message types, CRC32 checksum validation, payload encoding/decoding, and fragmentation/reassembly utilities.
 
-### A. Protocol (protocol.py)
+- **server.py:** Implements the Command Hub. It registers workers, maintains the task queue, distributes tasks, monitors worker activity, receives results, acknowledges completed tasks, and reassigns tasks when necessary.
 
-Defines the custom PC1 communication protocol.
+- **worker.py:** Implements the worker nodes. Each worker registers with the server, periodically sends heartbeat messages, receives and computes assigned tasks, and sends results back with acknowledgment and retransmission handling.
 
-Responsibilities:
-- Defines message types and protocol version.
-- Packs and unpacks network packets using Python's struct module.
-- Calculates and verifies CRC32 checksums for error detection.
-- Defines the payload formats for task dispatches and results.
-- Maintains CSV logging functionality.
+- **baseline_test.py:** Automates the baseline test by starting the server and four worker processes, monitoring execution, collecting results, and verifying the acceptance criteria.
 
-### B. Server (server.py)
+### 3. Protocol Design
 
-The server coordinates the distributed processing system.
+**Protocol Name:** RJDAP_FLEET  
+**Protocol Version:** 1  
+**Transport Protocol:** UDP  
+**Maximum Payload Size:** 512 bytes  
+**Header Size:** 20 bytes
 
-Responsibilities:
-- Listens for incoming UDP packets.
-- Registers workers and assigns worker IDs.
-- Maintains a queue of pending tasks.
-- Distributes tasks to available workers.
-- Tracks assigned tasks and their attempts.
-- Monitors worker activity using heartbeats.
-- Detects task timeouts and reassigns unfinished tasks.
-- Receives task results and sends acknowledgments.
-- Tracks completed tasks and duplicate results.
-- Collects performance statistics.
+The protocol defines five message types:
 
-### C. Worker (worker.py)
+1. WORKER_JOIN: Sent by a worker to register with the server.
+2. HEARTBEAT: Sent periodically to indicate that a worker is still active.
+3. TASK_DISPATCH: Sent by the server to assign a computational task to a worker.
+4. TASK_RESULT: Sent by a worker to return its computation result.
+5. ACK_RESULT: Sent by the server to acknowledge receipt of a task result.
 
-Each worker is an independent computing node.
+Each packet contains a fixed-size header followed by an optional payload.
 
-Responsibilities:
-- Registers with the server.
-- Sends periodic heartbeat messages.
-- Receives and processes assigned tasks.
-- Searches for a value whose SHA-256 hash matches the specified target prefix.
-- Sends task results back to the server.
-- Waits for acknowledgment packets.
-- Retransmits results when acknowledgments are not received.
-- Avoids recomputing tasks that have already been completed.
-
-## 3. Message Types
-
-The PC1 protocol defines the following message types:
-
-| Message Type | Value | Description |
-|---|---:|---|
-| WORKER_JOIN | 1 | Worker requests registration. |
-| HEARTBEAT | 2 | Indicates that a worker is active. |
-| TASK_DISPATCH | 3 | Server assigns a task to a worker. |
-| TASK_RESULT | 4 | Worker sends its computation result. |
-| ACK_RESULT | 5 | Server acknowledges a received result. |
-
-## 4. Packet Structure
-
-Each PC1 packet consists of a fixed-size header followed by an optional payload.
-
-The header is 20 bytes and contains:
-
-- Version
+The header includes:
+- Protocol version
 - Message type
 - Worker ID
 - Task ID
 - Attempt number
 - Fragment index
-- Total fragments
+- Total number of fragments
 - CRC32 checksum
 - Timestamp
 - Flags
 
-The payload contains additional information depending on the message type.
+**Reliability Mechanisms:**
 
-CRC32 is calculated over the header (with the checksum field set to zero) and the payload. The receiver recalculates the checksum to detect corrupted packets.
+- CRC32 checksum validation to detect corrupted packets.
+- Heartbeat messages to monitor worker availability.
+- Result acknowledgments to confirm successful receipt.
+- Retransmissions with exponential backoff when acknowledgments are not received.
+- Maximum retransmission attempts to avoid infinite retries.
+- Timeout detection and task reassignment when workers fail to complete their tasks.
+- Duplicate result detection to prevent completed tasks from being counted more than once.
 
-## 5. Task Processing
+### 4. Requirements
 
-The server initially creates a queue of 1000 tasks.
+Before running the project, ensure that you have:
 
-Each task contains a numerical search range and a target hash prefix.
+- Python 3 installed.
+- All four Python files in the same directory.
+- No additional third-party Python packages are required.
 
-When a worker receives a TASK_DISPATCH message, it:
-1. Extracts the assigned search range and target prefix.
-2. Computes SHA-256 hashes for the numbers in the range.
-3. Checks whether a hash matches the target prefix.
-4. Sends the result to the server.
-5. Waits for an ACK_RESULT message.
+### 5. How to Run the Project Locally
 
-The server records completed tasks and assigns new tasks to available workers.
+The project can be executed locally on a single computer.
 
-## 6. Reliability Mechanisms
+**Step 1: Prepare the project folder**
 
-Although UDP does not guarantee reliable delivery, the PC1 system implements several mechanisms to improve reliability:
+Place the following files in the same directory:
 
-**1. CRC32 Checksum**
+- protocol.py
+- server.py
+- worker.py
+- baseline_test.py
 
-Detects corrupted packets during transmission.
+**Step 2: Open a terminal**
 
-**2. Result Acknowledgment**
+Navigate to the project directory.
 
-The server sends an ACK_RESULT message after receiving a task result.
+**Step 3: Run the automated baseline test**
 
-**3. Retransmission**
+Execute:
 
-Workers retransmit task results if an acknowledgment is not received.
+python baseline_test.py
 
-**4. Exponential Backoff**
+The script automatically:
 
-The retransmission timeout increases after each unsuccessful attempt, up to a maximum timeout.
+1. Starts the Command Hub (server.py).
+2. Launches four concurrent worker processes.
+3. Distributes 1,000 computational tasks among the workers.
+4. Waits for the server to complete all tasks.
+5. Collects worker outputs and statistics.
+6. Verifies the baseline acceptance criteria.
+7. Displays the final test result.
 
-**5. Task Timeout and Reassignment**
+No manual network configuration or network impairment tools are required for this baseline test.
 
-If a worker does not return a result within the specified timeout, the server puts the task back into the queue and assigns it again.
+### 6. Baseline Test Scenario
 
-**6. Duplicate Detection**
+The baseline scenario uses the following configuration:
 
-The server tracks completed tasks to avoid counting the same result more than once. Workers also maintain a cache of previously computed tasks to avoid unnecessary recomputation.
+- Topology: 1 Command Hub + 4 concurrent workers.
+- Environment: Local execution on one computer.
+- Transport: UDP.
+- Network impairment: None.
+- Total tasks: 1,000.
+- Server port: 12000.
 
-**7. Heartbeat Monitoring**
+**Acceptance Criteria:**
 
-Workers periodically send heartbeat messages so the server can monitor their activity.
+The automated test checks the following conditions:
 
-## 7. Performance Monitoring and Logging
+1. All 1,000 tasks are completed successfully.
+2. Zero duplicate results are dropped.
+3. The four workers collectively compute exactly 1,000 tasks.
 
-The system collects performance information through CSV log files.
+The script also reports the total wall-clock execution time.
 
-Server:
-- server_log.csv
+A successful execution displays:
 
-Workers:
-- worker_1_log.csv
-- worker_2_log.csv
-- Additional worker log files depending on the worker ID.
+TEST PASSED: ALL CHECKED CONDITIONS MET!
 
-The logs record packet transmission and reception information, including timestamps, message types, task IDs, attempts, and packet sizes.
+If any of the checked conditions are not satisfied, the test displays:
 
-The server also tracks:
-- Total completion time.
-- Number of reassigned tasks.
-- Number of duplicate results dropped.
-- Number of corrupted packets.
+TEST FAILED: CRITERIA NOT SATISFIED
 
-Each worker tracks:
-- Number of tasks computed.
-- Number of duplicate dispatches.
-- Number of result retransmissions.
-- Number of tasks abandoned.
-- Computation time.
-- Idle time.
+### 7. Generated Log Files
 
-## 8. Technologies Used
+The system generates CSV log files during execution:
 
-- Python 3
-- UDP Sockets
-- Python struct module
-- SHA-256 hashing
-- CRC32 error detection
-- Multithreading
-- CSV logging
+- **server_log.csv:** Records server-side packet transmissions and receptions, including message type, worker ID, task ID, and attempt number.
 
-## 9. Project Files
+- **worker_1_log.csv:** Records communication events for worker 1.
 
-| File | Description |
-|---|---|
-| protocol.py | Defines the PC1 protocol and packet handling functions. |
-| server.py | Implements the central server and task scheduler. |
-| worker.py | Implements the distributed worker nodes. |
+- **worker_2_log.csv:** Records communication events for worker 2.
 
-## 10. Running the Project
+- **worker_3_log.csv:** Records communication events for worker 3.
 
-Make sure Python 3 is installed and all three Python files are in the same directory.
+- **worker_4_log.csv:** Records communication events for worker 4.
 
-### Step 1: Start the Server
+These files can be used to inspect protocol activity and analyze the execution of the baseline scenario.
 
-Open a terminal and run:
+### 8. Demonstration Video
 
-python server.py
+The demonstration video presents the project execution, protocol operation, worker registration, task distribution, and baseline test results.
 
-The server listens on UDP port 12000.
+Video Link:
 
-### Step 2: Start Workers
+[INSERT YOUR VIDEO LINK HERE]
 
-Open separate terminals for each worker and run:
+Note: The video must be uploaded online, and its sharing permissions must be set to "Anyone with the link can view".
 
-python worker.py 127.0.0.1 12000 1
+### 9. Project Execution Summary
 
-For additional workers:
+RJDAP_FLEET demonstrates reliable task distribution over UDP using application-layer mechanisms.
 
-python worker.py 127.0.0.1 12000 2
+The Command Hub coordinates multiple workers, assigns computational tasks, monitors worker availability, and ensures that completed results are acknowledged and duplicate results are handled appropriately.
 
-python worker.py 127.0.0.1 12000 3
-
-For testing across different machines, replace 127.0.0.1 with the server machine's IP address.
-
-### Step 3: Monitor Execution
-
-The server distributes tasks to available workers and collects their results.
-
-CSV log files are generated to record communication and performance information.
-
-## 11. Conclusion
-
-The PC1 project demonstrates how a distributed task processing system can be implemented using UDP sockets and a custom application-layer protocol.
-
-It introduces mechanisms for packet validation, task scheduling, worker monitoring, retransmission, acknowledgment, timeout handling, and performance evaluation.
+The baseline test provides an automated way to evaluate the system under normal local network conditions without network impairment.
