@@ -8,8 +8,10 @@ serverSocket.bind(('' , serverPort)) #'': accept packets addressed to this machi
 serverSocket.settimeout(0.02)  # recvfrom wakes up every 20 ms so we can check timeouts even when no packet arrives
 
 TOTAL = 1000        # number of tasks the project requires
-TIMEOUT = 0.2       # seconds to wait for a result before reassigning the task
-DEAD_AFTER = 1.0    # seconds of silence before a worker is considered crashed
+# [CHANGED 0.2 to 0.35: 0.2s was too tight under 150ms delayed ACK and netem jitter scenarios]
+TIMEOUT = 0.35      # seconds to wait for a result before reassigning the task
+# [CHANGED 1.0 to 3.0: 1.0s equaled worker heartbeat interval causing false worker deaths. 3.0s provides safe 3x margin]
+DEAD_AFTER = 3.0    # seconds of silence before a worker is considered crashed
 
 worker={} #stores each registered worker's ID, address, last_seen and which task it is busy with.
 addrToId={}  # network address -> worker ID (so a repeated JOIN from the same worker gets the same ID)
@@ -26,9 +28,13 @@ stats = {"reassigned": 0, "dup_dropped": 0, "corrupt": 0}  # metrics for the rep
 
 logFile = open("server_log.csv", "w")  # log of every packet sent/received (needed for the report)
 logFile.write("time,direction,msg_type,worker_id,task_id,attempt\n")
+# [NEW: flush initial CSV header]
+logFile.flush()
 
 def log(direction, msg_type, workerid, taskid, attempt):  # writes one line to the CSV log
  logFile.write("%.3f,%s,%d,%d,%d,%d\n" % (time.time(), direction, msg_type, workerid, taskid, attempt))
+ # [NEW: flush immediately so no logs are lost if test ends abruptly]
+ logFile.flush()
 
 def now_ms():  # current time in milliseconds (the packet header wraps it to 16 bits)
  return int(time.time() * 1000)
@@ -56,11 +62,16 @@ def assign_idle():  # give the next queued task to every alive worker that is fr
 
 def check_timeouts():  # tasks with no result for too long go back to the queue
  for taskid, p in list(pending.items()):
-   if time.time() - p["sent"] > TIMEOUT:
-     old = p["worker"]
+   old = p["worker"]
+   # [CHANGED: added check 'or not is_alive(old)' so dead worker tasks reassign immediately]
+   if time.time() - p["sent"] > TIMEOUT or not is_alive(old):
      print("Timeout: task", taskid, "from worker", old, "-> reassigning")
      del pending[taskid]
-     worker[old]["busy"] = None   # stop waiting on that worker (if its late result arrives, it is a duplicate)
+     # [CHANGED: if worker is alive free it; if dead mark 'DEAD' so assign_idle won't re-dispatch to the dead worker]
+     if is_alive(old):
+       worker[old]["busy"] = None   # stop waiting on that worker (if its late result arrives, it is a duplicate)
+     else:
+       worker[old]["busy"] = "DEAD"
      queue.insert(0, taskid)      # put the task at the FRONT of the queue
      stats["reassigned"] += 1
 
@@ -71,7 +82,8 @@ while len(completedTasks) < TOTAL: #stop when all tasks are done (was: while Tru
    packet=protocol.unpack_packet(data)
    if packet is None:  # corrupt/invalid packet, count it and ignore it instead of crashing
      stats["corrupt"] += 1
- except timeout:       # no packet arrived within 20 ms, that is fine
+ # [CHANGED timeout to (timeout, ConnectionResetError): On Windows, ICMP unreachable from killed worker throws ConnectionResetError; catching it prevents server crash]
+ except (timeout, ConnectionResetError):
    packet=None
 
  if packet!=None:
@@ -81,9 +93,15 @@ while len(completedTasks) < TOTAL: #stop when all tasks are done (was: while Tru
    if packet["msg_type"] == protocol.WORKER_JOIN: #check if he recieve a workerjoin mssg
      if workerAddress in addrToId:      # same worker joined again (our reply was lost), keep its ID
        workerid = addrToId[workerAddress]
+     # [CHANGED: if worker proposed a valid ID not taken yet, respect it; otherwise hand out nextWorkerId]
+     elif packet["worker_id"] > 0 and packet["worker_id"] not in worker:
+       workerid = packet["worker_id"]
+       addrToId[workerAddress] = workerid
      else:                              # new worker, the SERVER assigns a unique ID
        workerid = nextWorkerId
-       nextWorkerId += 1
+       while workerid in worker:
+         workerid += 1
+       nextWorkerId = workerid + 1
        addrToId[workerAddress] = workerid
      if startTime is None:              # the clock for total_completion_time starts at the first JOIN
        startTime = time.time()
@@ -109,8 +127,11 @@ while len(completedTasks) < TOTAL: #stop when all tasks are done (was: while Tru
        else:
          completedTasks.add(taskid)
          pending.pop(taskid, None)
-         found, value = protocol.unpack_result_payload(packet["payload"])
-         print("Task", taskid, "done by worker", workerid, "found:", found, "value:", value)
+         # [CHANGED: safe unpack check so corrupt/empty payload doesn't raise TypeError]
+         res = protocol.unpack_result_payload(packet["payload"])
+         if res:
+           found, value = res
+           print("Task", taskid, "done by worker", workerid, "found:", found, "value:", value)
 
        if worker[workerid]["busy"] == taskid:  # the worker is free again
          worker[workerid]["busy"] = None
@@ -123,4 +144,16 @@ totalTime = time.time() - startTime
 print("All", TOTAL, "tasks completed")
 print("total_completion_time: %.2f s" % totalTime)
 print("reassigned:", stats["reassigned"], "duplicates dropped:", stats["dup_dropped"], "corrupt packets:", stats["corrupt"])
+
+# [NEW: brief 0.5s grace period to ACK trailing duplicate packets before closing socket to prevent client errors]
+grace_end = time.time() + 0.5
+while time.time() < grace_end:
+    try:
+        data, addr = serverSocket.recvfrom(2048)
+        pkt = protocol.unpack_packet(data)
+        if pkt and pkt["msg_type"] == protocol.TASK_RESULT and pkt["worker_id"] in worker:
+            send(protocol.ACK_RESULT, pkt["worker_id"], pkt["task_id"], pkt["attempt"])
+    except (timeout, ConnectionResetError):
+        pass
+
 logFile.close()
